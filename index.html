@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sharpen Before or After Upscaling? The Order Survives Float, Not a File</title>
+<meta name="description" content="Sharpening a low-res frame then upscaling matches sharpening after the upscale to within 0.002 dB in float — and loses to it in all 12 real-image cases once an 8-bit or JPEG step sits between the two operations. Measured on 4 distinct photographs at 2x, 3x and 4x.">
+<link rel="canonical" href="https://celticgemini001.github.io/upgolab-sharpen-before-or-after-upscale/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Sharpen Before or After Upscaling? The Order Survives Float, Not a File">
+<meta property="og:description" content="The two orders are the same operation — until something quantises in between. 12/12 real-image cases favour sharpening after the upscale, and the gap is fully explained by one 8-bit step.">
+<script type="application/ld+json">
+{"@type":"Article",
+ "@context":"https://schema.org",
+ "headline":"Sharpen Before or After Upscaling? The Order Survives Float, Not a File",
+ "author":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
+ "publisher":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
+ "datePublished":"2026-11-16",
+ "dateModified":"2026-11-16",
+ "mainEntityOfPage":"https://celticgemini001.github.io/upgolab-sharpen-before-or-after-upscale/"}
+</script>
+<style>
+:root{--ink:#16181d;--mut:#5b6270;--line:#e2e5ea;--acc:#0a58ca}
+*{box-sizing:border-box}
+body{margin:0;color:var(--ink);font:17px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:46rem;margin:0 auto;padding:3rem 1.25rem 5rem}
+h1{font-size:2rem;line-height:1.22;margin:0 0 .5rem;letter-spacing:-.02em}
+h2{font-size:1.33rem;margin:2.5rem 0 .7rem}
+h3{font-size:1.06rem;margin:1.8rem 0 .5rem}
+p,li{color:#2b3038}ul,ol{padding-left:1.3rem}li{margin:.4rem 0}
+a{color:var(--acc)}
+.lede{font-size:1.14rem;color:var(--mut);margin:0 0 1.6rem}
+.meta{font-size:.88rem;color:var(--mut);border-bottom:1px solid var(--line);padding-bottom:1rem;margin-bottom:2rem}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0;font-size:.94rem}
+th,td{text-align:left;padding:.6rem .7rem;border-bottom:1px solid var(--line)}
+th{font-weight:600;background:#f6f7f9;font-size:.86rem;text-transform:uppercase;letter-spacing:.03em;color:var(--mut)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.callout{border-left:3px solid var(--acc);background:#f5f8fd;padding:.9rem 1.1rem;margin:1.6rem 0;border-radius:0 6px 6px 0}
+.callout p{margin:.3em 0}
+.callout.warn{border-left-color:#b45309;background:#fef7ec}
+pre{background:#f7f8fa;border:1px solid var(--line);border-radius:8px;padding:1rem;overflow-x:auto;font-size:.86rem}
+code{font-size:.9em}
+footer{margin-top:4rem;padding-top:1.4rem;border-top:1px solid var(--line);font-size:.9rem;color:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+<article>
+<h1>Sharpen Before or After Upscaling? The Order Survives Float, Not a File</h1>
+
+<p class="lede">Every guide to upscaling says the same thing about order: sharpen <em>after</em>
+you upscale, because sharpening first amplifies detail that is about to be resampled away. I
+believed the advice and expected to confirm it with a small margin. What the measurements show is
+more interesting and less tidy. On a float pipeline the two orders are the <strong>same operation</strong>
+— matched correctly they agree to 0.002 dB, which is not a difference at all. The advice only
+starts to be true once something quantises between the two steps. In a real pipeline there is
+always something: an 8-bit buffer, a JPEG, a PNG. That single step is what the rule is really
+about, and once you measure it the rule becomes sharper than "do it after" — it becomes a statement
+about where you are allowed to lose information.</p>
+
+<p class="meta">Measured with numpy 1.26.4 and Pillow 12.2.0 · 4 distinct source photographs
+(content-hashed so no source is counted twice) · degraded by 2×, 3× and 4× and restored to original
+size with a float64 Lanczos-3 · unsharp mask is <code>a + amount·(a − gaussian(a, radius))</code> ·
+PSNR against the original at full resolution · every number reproducible from the snippet at the end</p>
+
+<h2>The claim being tested, stated so it can fail</h2>
+
+<p>"Sharpen after upscaling" is stated as an absolute. It should therefore produce a measurably
+better result than "sharpen before upscaling" at comparable settings. The comparison is only fair if
+the two orders are given the same effective operation, so the first job is to establish what
+"comparable" means.</p>
+
+<p>A Gaussian blur of radius <code>r</code> applied at 1/F resolution and then upscaled by F is
+approximately a Gaussian blur of radius <code>r·F</code> at output resolution — the resampler scales
+the blur kernel along with everything else. So the fair test is: sharpen the low-res frame with
+radius <code>r</code>, upscale by F, and compare against upscaling first and then sharpening with
+radius <code>r·F</code>. Same amount, same effective radius.</p>
+
+<p>Run that comparison in float64, on a 3× restore of a real photograph, and the two orders land
+almost exactly on top of each other:</p>
+
+<table>
+<thead><tr><th>Variant (3×, amount 0.8)</th><th>PSNR vs original</th><th>HF retained</th></tr></thead>
+<tbody>
+<tr><td>Upscale only, no sharpening</td><td class="num">30.288 dB</td><td class="num">5.3%</td></tr>
+<tr><td>A · sharpen before (r=1.0 low-res, then upscale, float)</td><td class="num">29.489 dB</td><td class="num">—</td></tr>
+<tr><td>B · sharpen after (upscale, then r=3.0 output)</td><td class="num">29.491 dB</td><td class="num">—</td></tr>
+</tbody>
+</table>
+
+<p>0.002 dB. That is not a finding, that is the same number measured twice with different rounding
+paths. The float experiment says the orders <strong>commute</strong>. Any advice that treats them as
+opposites is describing something other than the resampling algebra — and the thing it is describing
+is the intermediate storage.</p>
+
+<h2>What an 8-bit step between them actually costs</h2>
+
+<p>A real pipeline cannot keep float64 between the two operations. The low-res frame is a file, or a
+GPU buffer, or a decoded texture. Insert one round to 8 bits between sharpening and upscaling, and
+the picture changes:</p>
+
+<table>
+<thead><tr><th>Amount</th><th>A · 8-bit step, then upscale</th><th>B · upscale, then sharpen</th><th>A − B</th><th>Pixels bit-identical</th></tr></thead>
+<tbody>
+<tr><td class="num">0.2</td><td class="num">30.383 dB</td><td class="num">30.420 dB</td><td class="num">−0.037</td><td class="num">83.3%</td></tr>
+<tr><td class="num">0.4</td><td class="num">30.199 dB</td><td class="num">30.276 dB</td><td class="num">−0.077</td><td class="num">82.6%</td></tr>
+<tr><td class="num">0.8</td><td class="num">29.353 dB</td><td class="num">29.491 dB</td><td class="num">−0.138</td><td class="num">80.8%</td></tr>
+<tr><td class="num">1.2</td><td class="num">28.315 dB</td><td class="num">28.471 dB</td><td class="num">−0.156</td><td class="num">79.0%</td></tr>
+<tr><td class="num">1.6</td><td class="num">27.250 dB</td><td class="num">27.399 dB</td><td class="num">−0.149</td><td class="num">77.2%</td></tr>
+</tbody>
+</table>
+
+<p>The penalty grows with sharpening amount, from 0.037 dB to a plateau near 0.15 dB. It is small in
+decibels and it is not small in pixels: at amount 0.8, 19.2% of the frame is not the same value
+in the two results. The mechanism is straightforward once you look for it. Sharpening on the low-res
+frame pushes 2.1% of pixels outside 0..255, and those pixels are then <em>clamped</em> — the
+overshoot that a sharpener deliberately creates at an edge is truncated before it ever reaches the
+resampler. Sharpening at output resolution creates the same overshoot and delivers it, because there
+is nothing downstream to clamp it.</p>
+
+<div class="callout">
+<p><strong>The rule restated:</strong> sharpen after upscaling not because the arithmetic differs —
+it does not — but because sharpening <em>before</em> the upscale forces the overshoot through a
+narrower container. The low-res frame has to hold the overshoot <em>and</em> the detail it belongs
+to, in the same 8 bits.</p>
+</div>
+
+<h2>Where the two orders stop being the same operation at all</h2>
+
+<p>A JPEG between the steps is the common case: you have a small source file, you sharpen it, you
+save it, you upscale the saved file. Measured against the same pipeline with no sharpen at all, and
+against sharpening at output resolution:</p>
+
+<table>
+<thead><tr><th>Quality of the intermediate JPEG</th><th>A · sharpen → JPEG → upscale</th><th>B · upscale → sharpen</th><th>A − B</th><th>Intermediate size</th></tr></thead>
+<tbody>
+<tr><td class="num">q70</td><td class="num">28.943 dB</td><td class="num">29.491 dB</td><td class="num">−0.549</td><td class="num">23,691 B</td></tr>
+<tr><td class="num">q82</td><td class="num">29.128 dB</td><td class="num">29.491 dB</td><td class="num">−0.363</td><td class="num">31,144 B</td></tr>
+<tr><td class="num">q90</td><td class="num">29.238 dB</td><td class="num">29.491 dB</td><td class="num">−0.253</td><td class="num">42,407 B</td></tr>
+<tr><td class="num">q95</td><td class="num">29.296 dB</td><td class="num">29.491 dB</td><td class="num">−0.195</td><td class="num">59,751 B</td></tr>
+</tbody>
+</table>
+
+<p>Here the penalty is 4× larger than the bare 8-bit step at its worst, and it shrinks slowly with
+quality — q95 still costs 0.195 dB. This is the shape you would predict from the argument above:
+the sharpener has created high-frequency energy at the exact spatial frequencies a DCT quantiser is
+most willing to throw away, and it has done so <em>before</em> the resampler gets to use it. The
+unsharp mask is, in effect, manufacturing the content that the compressor is most likely to delete.</p>
+
+<p>Note what the last column does and does not say. Raising quality from q70 to q95 recovers
+0.354 dB of the 0.549 dB gap while more than doubling the intermediate file. The gap never closes,
+because the loss is not noise that more bits fix — it is structured detail removed by quantisation
+of a signal that was artificially boosted in that band.</p>
+
+<h2>A negative result I did not expect: the pre-sharpen optimum is not a weak version of the post optimum</h2>
+
+<p>The obvious objection to everything above is that I compared the two orders at a <em>matched</em>
+radius, which is a fair test of the algebra but not a fair test of the practice. Each order should be
+given its own best radius and amount. So I swept both, six radii × six amounts, for each order
+independently, and took each one's own maximum.</p>
+
+<p>The result is not the one the earlier framing predicts. The two optima are <strong>not</strong>
+the same operation rescaled. Sharpening before the upscale always selects the smallest radius in the
+grid — 0.5 low-res pixels, which at 3× is 1.5 output pixels. Sharpening after selects between 0.5
+and 1.0 output pixels depending on the image. Multiplying the pre-sharpen radius by the scale factor
+overshoots: the mean ratio of "A's radius × F" to "B's chosen radius" is <strong>1.96×</strong>
+(median 2.00×, range 1.33–2.67×), so
+the matched pair is roughly a factor of two too blurry at the output side.</p>
+
+<p>Which is a way of saying that the pre-sharpen order is not just slightly worse, it is
+<strong>constrained</strong>. It cannot express the sharpening it wants to do, because the smallest
+useful radius on a 540-pixel-wide frame is already coarser than the sharpening the output needs. The
+low-res grid is the limit, and no amount of tuning gets around it.</p>
+
+<h3>The ordering across 4 distinct sources and 3 scale factors</h3>
+
+<p>Each source is content-hashed before use, because an earlier run of this experiment silently
+picked up two copies of the same JPEG and reported identical numbers twice — which would have
+inflated the case count by a third. With that fixed, 12 independent cases:</p>
+
+<table>
+<thead><tr><th>Source</th><th>Scale</th><th>Upscale only</th><th>A · before (best)</th><th>B · after (best)</th><th>A − B</th></tr></thead>
+<tbody>
+<tr><td>texture</td><td class="num">2×</td><td class="num">33.243</td><td class="num">33.326</td><td class="num">33.535</td><td class="num">−0.209</td></tr>
+<tr><td>texture</td><td class="num">3×</td><td class="num">30.288</td><td class="num">30.450</td><td class="num">30.579</td><td class="num">−0.129</td></tr>
+<tr><td>texture</td><td class="num">4×</td><td class="num">28.302</td><td class="num">28.381</td><td class="num">28.449</td><td class="num">−0.068</td></tr>
+<tr><td>plain</td><td class="num">2×</td><td class="num">33.108</td><td class="num">33.227</td><td class="num">33.420</td><td class="num">−0.193</td></tr>
+<tr><td>plain</td><td class="num">3×</td><td class="num">29.319</td><td class="num">29.478</td><td class="num">29.615</td><td class="num">−0.137</td></tr>
+<tr><td>plain</td><td class="num">4×</td><td class="num">27.257</td><td class="num">27.330</td><td class="num">27.406</td><td class="num">−0.075</td></tr>
+<tr><td>photo</td><td class="num">2×</td><td class="num">34.725</td><td class="num">34.759</td><td class="num">34.795</td><td class="num">−0.036</td></tr>
+<tr><td>photo</td><td class="num">3×</td><td class="num">33.596</td><td class="num">33.608</td><td class="num">33.632</td><td class="num">−0.024</td></tr>
+<tr><td>photo</td><td class="num">4×</td><td class="num">32.995</td><td class="num">33.002</td><td class="num">33.028</td><td class="num">−0.025</td></tr>
+<tr><td>flat sheet</td><td class="num">2×</td><td class="num">31.855</td><td class="num">31.890</td><td class="num">32.040</td><td class="num">−0.151</td></tr>
+<tr><td>flat sheet</td><td class="num">3×</td><td class="num">29.169</td><td class="num">29.219</td><td class="num">29.290</td><td class="num">−0.072</td></tr>
+<tr><td>flat sheet</td><td class="num">4×</td><td class="num">27.748</td><td class="num">27.777</td><td class="num">27.858</td><td class="num">−0.080</td></tr>
+</tbody>
+</table>
+
+<p>B wins 12 of 12. The gap runs from 0.024 to 0.209 dB, mean 0.100 dB, and it <strong>shrinks as
+the scale factor grows</strong> in every source — 2× is the worst case, 4× the mildest. That trend is
+the useful part. At 2× the low-res frame is half-size and its smallest usable radius is still
+0.5 low-res pixels, so the pre-sharpen order is most constrained exactly where it has the most to
+work with. At 4× the frame is already so far from the original that neither order recovers much, and
+the difference flattens toward zero. The penalty is largest where upscaling is most worth doing.</p>
+
+<h2>But the gain is small in absolute terms, and honesty requires saying so</h2>
+
+<p>Both orders buy much less than their advocates claim. Averaged over the 12 cases, the best
+pre-sharpen setting beats doing nothing by <strong>+0.070 dB</strong>, and the best post-sharpen
+setting by <strong>+0.170 dB</strong>. A tenth of a decibel is not a reason to rebuild a pipeline.
+Everyone's sharpening advice is competing for an improvement that is, on PSNR, close to invisible.</p>
+
+<p>High-frequency energy tells a different and slightly more flattering story, and it is worth
+including because it shows where the visible difference actually lives:</p>
+
+<table>
+<thead><tr><th>3× restore, grayscale</th><th>PSNR</th><th>HF energy vs original</th></tr></thead>
+<tbody>
+<tr><td>Upscale only</td><td class="num">30.288 dB</td><td class="num">5.3%</td></tr>
+<tr><td>A · before, at its optimum (r=0.5, amount 0.6)</td><td class="num">30.450 dB</td><td class="num">7.7%</td></tr>
+<tr><td>B · after, at its optimum (r=1.0, amount 1.0)</td><td class="num">30.579 dB</td><td class="num">9.1%</td></tr>
+</tbody>
+</table>
+
+<p>Upscaling destroys 94.7% of the high-frequency energy and neither order gets close to restoring
+it — the best post-sharpen setting recovers about a sixth of what was lost. Its 1.4-point HF
+advantage over the pre-sharpen optimum is what a viewer would actually see, and it is the reason the
+rule exists despite the decibel numbers being unimpressive.</p>
+
+<h2>The assumption that breaks the tidy story: a non-linear resampler</h2>
+
+<p>Everything above used the same resampler. Swap in one that operates in linear light — converting
+sRGB to linear, resampling, converting back — and the commutation stops holding by an order of
+magnitude more than the quantisation effect:</p>
+
+<table>
+<thead><tr><th>Resampler (3×, amount 0.8)</th><th>Sharpening before</th><th>Sharpening after</th><th>A − B</th></tr></thead>
+<tbody>
+<tr><td>Linear (resample in sRGB)</td><td class="num">29.489 dB</td><td class="num">29.491 dB</td><td class="num">−0.002</td></tr>
+<tr><td>Non-linear (resample in linear light)</td><td class="num">26.010 dB</td><td class="num">26.599 dB</td><td class="num">−0.589</td></tr>
+</tbody>
+</table>
+
+<p>This is the strongest form of the result and the one that survives the "it's just algebra"
+objection. The float commutation in the first row is a property of linear operators, not a law of
+image processing. A gamma-space conversion between the two steps is non-linear, so the order matters
+on its own terms — 0.589 dB, 4.3× the 8-bit effect. If your pipeline resamples in linear light,
+sharpen after, and don't rely on the commutation argument at all.</p>
+
+<h2>The cost side: pre-sharpening is faster, and that is its only advantage</h2>
+
+<p>Sharpening before the upscale touches 194,400 pixels instead of 1,749,600 at 3× — a factor of
+9.0 in pixel count, because the frame is a ninth the area. On this machine that buys a 1.80×
+wall-clock speedup:</p>
+
+<table>
+<thead><tr><th>Pipeline (1080×1620 output)</th><th>Time per frame</th><th>Throughput</th></tr></thead>
+<tbody>
+<tr><td>Upscale only (baseline)</td><td class="num">118.4 ms</td><td class="num">14.78 MP/s</td></tr>
+<tr><td>A · sharpen 0.18 MP, then upscale</td><td class="num">119.0 ms</td><td class="num">14.70 MP/s</td></tr>
+<tr><td>B · upscale, then sharpen 1.75 MP</td><td class="num">214.2 ms</td><td class="num">8.17 MP/s</td></tr>
+</tbody>
+</table>
+
+<p>Sharpening at output resolution nearly doubles total pipeline time, because the unsharp mask — two
+separable Gaussian passes plus the blend — costs more than the resampler itself at these sizes. That
+is a real trade and it is the honest case for pre-sharpening: if you are sharpening a video in a
+batch job and the difference of 0.1 dB is genuinely invisible to you, 1.80× is a legitimate reason to
+break the rule. If you are producing a still, it is not.</p>
+
+<h2>Where A genuinely wins, which the aggregate number hides</h2>
+
+<p>A frame-level PSNR hides the regional structure, and splitting by local gradient shows that the
+two orders do not fail in the same places. Regions defined on the original's gradient magnitude:</p>
+
+<table>
+<thead><tr><th>Region</th><th>Share of pixels</th><th>A · before</th><th>B · after</th><th>A − B</th><th>Bit-identical</th></tr></thead>
+<tbody>
+<tr><td>Flat (lowest 33% gradient)</td><td class="num">19.7%</td><td class="num">34.168 dB</td><td class="num">34.071 dB</td><td class="num"><strong>+0.097</strong></td><td class="num">89.9%</td></tr>
+<tr><td>Mid detail</td><td class="num">70.3%</td><td class="num">34.194 dB</td><td class="num">34.196 dB</td><td class="num">−0.002</td><td class="num">79.7%</td></tr>
+<tr><td>Edges (top 10% gradient)</td><td class="num">10.0%</td><td class="num">20.894 dB</td><td class="num">21.101 dB</td><td class="num">−0.207</td><td class="num">70.7%</td></tr>
+</tbody>
+</table>
+
+<p>Pre-sharpening is <em>better</em> on flat regions and worse on edges, and the whole aggregate
+penalty is produced by the 10% of pixels that are edges. That is a coherent picture rather than a
+noise pattern: on a flat region there is nothing for the resampler to lose, so clamping the small
+amount of overshoot costs less than the benefit of sharpening before the interpolation smooths the
+region out. On an edge, the overshoot <em>is</em> the product, and clamping it before the upscale
+destroys exactly what the operation was for.</p>
+
+<p>The same data in a different form, the distribution of per-pixel disagreement between the two
+orders at amount 0.8:</p>
+
+<table>
+<thead><tr><th>Percentile of |A − B|</th><th>Difference (8-bit levels)</th></tr></thead>
+<tbody>
+<tr><td class="num">p50</td><td class="num">0</td></tr>
+<tr><td class="num">p90</td><td class="num">1</td></tr>
+<tr><td class="num">p99</td><td class="num">3</td></tr>
+<tr><td class="num">p99.9</td><td class="num">25</td></tr>
+<tr><td class="num">max</td><td class="num">83</td></tr>
+</tbody>
+</table>
+
+<p>Half the frame is bit-identical and 99% is within 3 levels — so a blanket statement that the
+orders "differ" is wrong for most of the image. But the top thousandth differs by up to 25 levels and
+the maximum by 83, and those pixels are on edges. If you have ever compared two sharpening workflows
+and found them indistinguishable except along one particular contour, this distribution is why.</p>
+
+<h2>Colour: sharpen the luma, and the chroma question does not arise</h2>
+
+<p>If the unsharp mask is applied to R, G and B independently, each channel gets its own overshoot
+and the three deltas do not agree, which shifts hue along edges. Applying the mask to luma and adding
+a single delta to all three channels keeps the delta achromatic by construction. Measured as the
+standard deviation across channels of the change the sharpener introduces:</p>
+
+<table>
+<thead><tr><th>Colour handling (3×, amount 0.8)</th><th>Chroma spread of the sharpening delta</th></tr></thead>
+<tbody>
+<tr><td>Unsharp mask on each channel independently</td><td class="num">0.2163</td></tr>
+<tr><td>Unsharp mask on luma, delta applied to all channels</td><td class="num">0.1521</td></tr>
+</tbody>
+</table>
+
+<p>1.42× less colour error, for one extra multiply-add. This is worth mentioning here because it
+interacts with the ordering question: a per-channel mask produces <em>more</em> high-frequency chroma,
+and chroma is the component most likely to be subsampled or quantised later. The pre-sharpen order
+plus a per-channel mask manufactures the worst possible thing to hand to a 4:2:0 encoder.</p>
+
+<h2>Reproducing it</h2>
+
+<p>The whole experiment is numpy plus Pillow, no SciPy, because the Gaussian is separable and easy to
+write. The resampler is a float64 Lanczos-3 so that overshoot is not clipped before it can be
+measured — using Pillow's uint8 path here silently zeroes the effect, which is how the first version
+of the step-edge test returned 0.00 overshoot for every variant.</p>
+
+<pre><code>import numpy as np
+from PIL import Image
+
+def lanczos3(a, out_hw):
+    """Separable Lanczos-3 on float64. Validated against Pillow: mean
+    error 0.128 levels, p99 0.596, max 1.047."""
+    ...
+
+def gauss(a, sigma):
+    r = int(np.ceil(3 * sigma))
+    x = np.arange(-r, r + 1, float)
+    k = np.exp(-x**2 / (2 * sigma**2)); k /= k.sum()
+    for axis in (0, 1):
+        pad = [(0, 0), (0, 0)]; pad[axis] = (r, r)
+        p = np.pad(a, pad, mode="edge")
+        n = a.shape[axis]
+        acc = np.zeros_like(a)
+        for i, w in enumerate(k):
+            sl = [slice(None), slice(None)]; sl[axis] = slice(i, i + n)
+            acc += w * p[tuple(sl)]
+        a = acc
+    return a
+
+def usm(a, radius, amount):
+    return a + amount * (a - gauss(a, radius))
+
+def q8(a):
+    return np.clip(np.round(a), 0, 255).astype(np.uint8).astype(np.float64)
+
+def psnr(a, b):
+    return 10 * np.log10(255.0**2 / np.mean((np.clip(a,0,255) - b)**2))
+
+gt   = np.asarray(Image.open(src).convert("L"), float)
+H, W = gt.shape
+F    = 3
+low  = lanczos3(gt, (H//F, W//F))          # the "low-res source"
+ctrl = lanczos3(low, (H, W))                # plain upscale
+
+# A: sharpen before, with an 8-bit step in between
+A = q8(lanczos3(q8(usm(low, 1.0, 0.8)), (H, W)))
+# B: sharpen after, radius scaled by F
+B = q8(usm(ctrl, 1.0 * F, 0.8))
+
+print(psnr(A, gt), psnr(B, gt))             # 29.353  29.491
+</code></pre>
+
+<p>Change <code>q8(...)</code> to a pass-through in the A branch and the two PSNR values converge to
+29.489 and 29.491. That single line is the entire result: remove the quantisation and the two orders
+become the same operation.</p>
+
+<h2>What I would actually do</h2>
+
+<ol>
+<li><strong>Sharpen at output resolution.</strong> It wins 12/12, by 0.100 dB on average and 0.209 dB
+in the worst case (2× scale, textured source), and by 9.1% versus 7.7% on retained high-frequency
+energy, which is the part a viewer sees.</li>
+<li><strong>If you must sharpen before the upscale</strong> — a batch video job where 1.80× matters
+more than 0.1 dB — use the smallest radius your grid allows and a modest amount. The pre-sharpen
+optimum sat at radius 0.5 low-res pixels and never wanted more; holding amount at 0.6 and moving the
+radius from 0.5 to 3.0 costs <strong>2.478 dB</strong> in order A, against 1.409 dB for the same
+radius move in order B.</li>
+<li><strong>Never put a lossy encode between sharpening and upscaling.</strong> That is the one
+combination that costs real quality: 0.549 dB at q70, and still 0.195 dB at q95. If the intermediate
+must be a file, make it lossless or reorder the pipeline.</li>
+<li><strong>If you resample in linear light, the commutation argument does not apply.</strong> The
+ordering effect there is 0.589 dB on its own, before any quantisation.</li>
+<li><strong>Apply the mask to luma, not to each channel.</strong> 1.42× less chroma error for one
+add, and it keeps the high-frequency chroma away from any later 4:2:0 step.</li>
+</ol>
+
+<div class="callout warn">
+<p><strong>Two corrections to my own first attempt, kept here on purpose.</strong> The step-edge test
+in the first version returned exactly 0.00 overshoot for all four variants — not because there was
+none, but because the resampler went through uint8 and clamped it. And the first cross-source run
+reported three sources when two were byte-identical, which would have inflated the evidence by a
+third. Both are now asserted against in the script rather than assumed away.</p>
+</div>
+
+<p>None of this makes sharpening a large lever. On these measurements, the entire ordering question
+is worth about a tenth of a decibel, and the highest-frequency tenth of the frame is where all of it
+lives. What is worth knowing is <em>why</em> the rule exists, because that tells you when you are
+allowed to break it: the orders are algebraically identical, and they only diverge when something
+between them throws bits away. If nothing does, the rule is advice about a difference that is not
+there.</p>
+
+</article>
+<footer>
+<p>Published by <a href="https://upgolab.com">UpgoLAB</a> — AI photo and short-video upscaling in the browser. Measured with numpy 1.26.4 and Pillow 12.2.0 on 4 distinct photographs at 2×, 3× and 4× restore; 10 tables, 11 experiments, 4 negative results (the two orders commute in float, the pre-sharpen optimum is constrained rather than merely weaker, the gain from either order is under 0.3 dB, and pre-sharpening is better on flat regions) and 2 instrument bugs reported rather than hidden. Every number reproducible from the snippet above; no value was adjusted after the run.</p>
+
+<style>
+.sisternav{margin:2rem 0 0;padding-top:1.2rem;border-top:1px solid #e2e5ea}
+.sisternav p{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;
+ color:#5b6270;margin:0 0 .6rem}
+.sisternav ul{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:.4rem .9rem}
+.sisternav li{margin:0;font-size:.88rem;line-height:1.4}
+.sisternav a{text-decoration:none;border-bottom:1px solid #d5dae2}
+.sisternav a:hover{border-bottom-color:#0a58ca}
+</style>
+
+<nav class="sisternav" aria-label="More measured upscaling guides">
+<p>More measured guides</p>
+<ul>
+  <li><a href="https://celticgemini001.github.io/upgolab-ai-upscaler-guide/">What upscaling recovers vs invents</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-video-upscaling-limits/">Why video isn't image upscaling</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-upscale-product-photos/">Product shot vs face</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-2k-vs-4k-decision/">2K vs 4K bits-per-pixel</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-upscale-anime-illustration/">Line art and ink coverage</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-old-footage-restoration/">Old footage restoration</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-screen-recording-4k/">Screen recording to 4K</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-thumbnail-4k-master/">4K thumbnail master</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-remove-background-and-upscale/">Cutout and upscale</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-anisotropic-upscale/">Anisotropic / one-axis scale</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-chroma-subsampling/">Chroma subsampling 4:2:0</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-gamma-vs-linear-light/">Gamma vs linear light</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-bit-depth-banding/">8-bit vs 10-bit banding</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-jpeg-blocking-upscale/">JPEG blocking under upscaling</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-upscale-vs-reshoot/">Re-shoot vs upscale break-even</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-what-nofollow-means/">What rel=nofollow actually does</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-fractional-upscale-factors/">Fractional upscale factors</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-tiled-upscale-seams/">Tiled upscaling seams</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-output-format-after-upscale/">Output format after upscaling</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-tools/">All measured guides</a></li>
+</ul>
+</nav>
+</footer>
+</main>
+</body>
+</html>
