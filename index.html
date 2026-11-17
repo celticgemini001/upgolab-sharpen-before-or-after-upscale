@@ -399,7 +399,14 @@ become the same operation.</p>
 <ol>
 <li><strong>Sharpen at output resolution.</strong> It wins 12/12, by 0.100 dB on average and 0.209 dB
 in the worst case (2× scale, textured source), and by 9.1% versus 7.7% on retained high-frequency
-energy, which is the part a viewer sees.</li>
+energy, which is the part a viewer sees. Note the condition this holds under: the source here is a
+<em>sharp</em> image that is merely being resampled, so the right radius at output is a
+scale factor times the radius you would have used, and the resampler's own softness is usually
+wider than that. When the softness is capture-side motion blur with a known length, the radius in
+source pixels is the quantity you actually know — see
+<a href="https://celticgemini001.github.io/upgolab-motion-blur-before-upscale/#pipeline-order">the
+pipeline-order test on the motion-blur page</a>, where an unscaled radius at 4× turns a 0.45 dB gain
+into &minus;0.009 dB.</li>
 <li><strong>If you must sharpen before the upscale</strong> — a batch video job where 1.80× matters
 more than 0.1 dB — use the smallest radius your grid allows and a modest amount. The pre-sharpen
 optimum sat at radius 0.5 low-res pixels and never wanted more; holding amount at 0.6 and moving the
